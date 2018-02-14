@@ -87,7 +87,7 @@ func getNewCreds(sess *session.Session) *iam.AccessKey {
 	// make sure there is only one set of creds
 	var currentKeyID *string
 	if len(currentKeys.AccessKeyMetadata) > 1 {
-		print("There is more than 1 key defined for this profile")
+		print("There is more than 1 key defined for this profile, nothing has been changed, exiting.")
 		os.Exit(1)
 	} else {
 		currentKeyID = currentKeys.AccessKeyMetadata[0].AccessKeyId
@@ -98,11 +98,10 @@ func getNewCreds(sess *session.Session) *iam.AccessKey {
 	check(err)
 
 	// remove old creds
-	result, err := iamClient.DeleteAccessKey(&iam.DeleteAccessKeyInput{
+	_, err = iamClient.DeleteAccessKey(&iam.DeleteAccessKeyInput{
 		AccessKeyId: currentKeyID,
 	})
 	check(err)
-	print(result)
 
 	return newCreds.AccessKey
 }
@@ -121,4 +120,5 @@ func main() {
 	creds[profile]["aws_access_key_id"] = *newCreds.AccessKeyId
 	creds[profile]["aws_secret_access_key"] = *newCreds.SecretAccessKey
 	writeCreds(credsFilePath, creds)
+	print("Successfully rolled creds for " + profile)
 }
