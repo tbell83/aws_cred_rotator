@@ -108,17 +108,27 @@ func getNewCreds(sess *session.Session) *iam.AccessKey {
 
 func main() {
 	profileFlag := flag.String("profile", "default", "AWS profile, defaults to 'default'")
+	awsCredsFileFlag := flag.String("AWS config path", "/.aws/credentials", "defaults to '~/.aws/credentials'")
+	flag.Parse()
+	profiles := strings.Split(*profileFlag, ",")
+	awsCredsFile := *awsCredsFileFlag
+
 	user, err := user.Current()
 	check(err)
-	credsFilePath := user.HomeDir + "/.aws/credentials"
-	flag.Parse()
-	profile := *profileFlag
 
-	sess := awsSession(profile)
-	creds := readCreds(credsFilePath)
-	newCreds := getNewCreds(sess)
-	creds[profile]["aws_access_key_id"] = *newCreds.AccessKeyId
-	creds[profile]["aws_secret_access_key"] = *newCreds.SecretAccessKey
-	writeCreds(credsFilePath, creds)
-	print("Successfully rolled creds for " + profile)
+	credsFilePath := user.HomeDir + awsCredsFile
+	if awsCredsFile != "/.aws/credentials" {
+		credsFilePath = awsCredsFile
+	}
+
+	for i := 0; i < len(profiles); i++ {
+		profile := profiles[i]
+		sess := awsSession(profile)
+		creds := readCreds(credsFilePath)
+		newCreds := getNewCreds(sess)
+		creds[profile]["aws_access_key_id"] = *newCreds.AccessKeyId
+		creds[profile]["aws_secret_access_key"] = *newCreds.SecretAccessKey
+		writeCreds(credsFilePath, creds)
+		print("Successfully rolled creds for " + profile)
+	}
 }
