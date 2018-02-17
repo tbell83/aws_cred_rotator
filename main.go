@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/user"
 	"regexp"
@@ -82,6 +83,25 @@ func readCreds(configFiles []string) map[string]map[string]string {
 	return blocks
 }
 
+func backup(configFiles []string) {
+	for i := 0; i < len(configFiles); i++ {
+		configFile := configFiles[i]
+		src, err := os.Open(configFile)
+		check(err)
+		defer src.Close()
+
+		dst, err := os.Create(configFile + ".bak")
+		check(err)
+		defer dst.Close()
+
+		_, err = io.Copy(dst, src)
+		check(err)
+
+		err = dst.Sync()
+		check(err)
+	}
+}
+
 func writeCreds(configPath string, creds map[string]map[string]string) {
 	files := [2]string{"config", "credentials"}
 	for i := 0; i < len(files); i++ {
@@ -107,12 +127,6 @@ func writeCreds(configPath string, creds map[string]map[string]string) {
 			writer.WriteString("\n")
 		}
 		writer.Flush()
-
-		// move old file, if it exists
-		if _, err := os.Stat(configPath + filename); err == nil {
-			err = os.Rename(configPath+filename, configPath+filename+".bak")
-			check(err)
-		}
 
 		// rename new credsFile
 		err = os.Rename(configPath+filename+".tmp", configPath+filename)
@@ -160,14 +174,16 @@ func main() {
 	credsFilePath := strings.Replace(awsCredsFile, "~", user.HomeDir, 1)
 	credsFiles := findCreds(credsFilePath)
 
+	backup(credsFiles)
+
+	creds := readCreds(credsFiles)
 	for i := 0; i < len(profiles); i++ {
 		profile := profiles[i]
 		sess := awsSession(profile)
-		creds := readCreds(credsFiles)
 		newCreds := getNewCreds(sess)
 		creds[profile]["aws_access_key_id"] = *newCreds.AccessKeyId
 		creds[profile]["aws_secret_access_key"] = *newCreds.SecretAccessKey
-		writeCreds(credsFilePath, creds)
 		print("Successfully rolled creds for " + profile)
 	}
+	writeCreds(credsFilePath, creds)
 }
