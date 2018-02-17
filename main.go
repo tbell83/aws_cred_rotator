@@ -107,8 +107,8 @@ func getNewCreds(sess *session.Session) *iam.AccessKey {
 }
 
 func main() {
-	profileFlag := flag.String("profile", "default", "AWS profile, defaults to 'default'")
-	awsCredsFileFlag := flag.String("AWS config path", "/.aws/credentials", "defaults to '~/.aws/credentials'")
+	profileFlag := flag.String("profile", "default", "AWS profile for which to rotate credentials. Use comma-delimited string to rotate multiple profiles.")
+	awsCredsFileFlag := flag.String("creds-file", "~/.aws/credentials", "Path for AWS CLI credentials file.")
 	flag.Parse()
 	profiles := strings.Split(*profileFlag, ",")
 	awsCredsFile := *awsCredsFileFlag
@@ -116,10 +116,8 @@ func main() {
 	user, err := user.Current()
 	check(err)
 
-	credsFilePath := user.HomeDir + awsCredsFile
-	if awsCredsFile != "/.aws/credentials" {
-		credsFilePath = awsCredsFile
-	}
+	credsFilePath := strings.Replace(awsCredsFile, "~", user.HomeDir, 1)
+	print(credsFilePath)
 
 	for i := 0; i < len(profiles); i++ {
 		profile := profiles[i]
