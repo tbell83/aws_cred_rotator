@@ -26,57 +26,98 @@ func awsSession(profile string) *session.Session {
 		profile = "default"
 	}
 	sess := session.Must(session.NewSessionWithOptions(session.Options{
-		Profile: profile,
+		SharedConfigState: session.SharedConfigEnable,
+		Profile:           profile,
 	}))
 	return sess
 }
 
-func readCreds(credsFilePath string) map[string]map[string]string {
-	credsFile, err := os.Open(credsFilePath)
-	check(err)
+func findCreds(configDir string) []string {
+	var configFiles = [2]string{"config", "credentials"}
+	files := make([]string, 0)
+	for i := 0; i < 2; i++ {
+		_, err := os.Open(configDir + configFiles[i])
+		if err == nil {
+			files = append(files, configDir+configFiles[i])
+		}
+	}
+	return files
+}
+
+func readCreds(configFiles []string) map[string]map[string]string {
 	blocks := make(map[string]map[string]string)
 	regex, err := regexp.Compile("^\\[.*\\]")
 	check(err)
-	scanner := bufio.NewScanner(credsFile)
-	var profileName string
-	for scanner.Scan() {
-		if scanner.Text() != "" {
-			if regex.MatchString(scanner.Text()) {
-				profileName = strings.Replace(strings.Replace(scanner.Text(), "[", "", -1), "]", "", -1)
-				blocks[profileName] = make(map[string]string, 2)
+
+	for i := 0; i < len(configFiles); i++ {
+		configFile := configFiles[i]
+		file, err := os.Open(configFile)
+		check(err)
+
+		scanner := bufio.NewScanner(file)
+		var profileName string
+		for scanner.Scan() {
+			if scanner.Text() != "" {
+				if regex.MatchString(scanner.Text()) {
+					profileName = strings.Replace(strings.Replace(strings.Replace(scanner.Text(), "[", "", -1), "]", "", -1), "profile ", "", 1)
+					if _, ok := blocks[profileName]; !ok {
+						blocks[profileName] = make(map[string]string, 2)
+					}
+				} else {
+					split := strings.Split(scanner.Text(), "=")
+					if len(split) != 2 {
+						split = append(split, "")
+						split[0] = strings.Replace(split[0], "=", "", 1)
+					}
+					for i2 := 0; i2 < len(split); i2++ {
+						split[i2] = strings.Replace(split[i2], " ", "", -1)
+					}
+					blocks[profileName][split[0]] = split[1]
+				}
 			} else {
-				split := strings.Split(scanner.Text(), " = ")
-				blocks[profileName][split[0]] = split[1]
+				profileName = ""
 			}
-		} else {
-			profileName = ""
 		}
 	}
 	return blocks
 }
 
-func writeCreds(credsFilePath string, creds map[string]map[string]string) {
-	file, err := os.Create(credsFilePath + ".tmp")
-	check(err)
-	defer file.Close()
+func writeCreds(configPath string, creds map[string]map[string]string) {
+	files := [2]string{"config", "credentials"}
+	for i := 0; i < len(files); i++ {
+		filename := files[i]
+		file, err := os.Create(configPath + filename + ".tmp")
+		check(err)
+		defer file.Close()
 
-	writer := bufio.NewWriter(file)
-	for profile, credmap := range creds {
-		writer.WriteString("[" + profile + "]\n")
-		for key, value := range credmap {
-			writer.WriteString(key + " = " + value + "\n")
+		writer := bufio.NewWriter(file)
+		for profile, credmap := range creds {
+			if filename == "config" && profile != "default" {
+				writer.WriteString("[profile " + profile + "]\n")
+			} else {
+				writer.WriteString("[" + profile + "]\n")
+			}
+			for key, value := range credmap {
+				if filename == "config" && key != "aws_secret_access_key" && key != "aws_access_key_id" {
+					writer.WriteString(key + "=" + value + "\n")
+				} else if filename == "credentials" && (key == "aws_secret_access_key" || key == "aws_access_key_id") {
+					writer.WriteString(key + "=" + value + "\n")
+				}
+			}
+			writer.WriteString("\n")
 		}
-		writer.WriteString("\n")
+		writer.Flush()
+
+		// move old file, if it exists
+		if _, err := os.Stat(configPath + filename); err == nil {
+			err = os.Rename(configPath+filename, configPath+filename+".bak")
+			check(err)
+		}
+
+		// rename new credsFile
+		err = os.Rename(configPath+filename+".tmp", configPath+filename)
+		check(err)
 	}
-	writer.Flush()
-
-	// move old credsFile
-	err = os.Rename(credsFilePath, credsFilePath+".bak")
-	check(err)
-
-	// rename new credsFile
-	err = os.Rename(credsFilePath+".tmp", credsFilePath)
-	check(err)
 }
 
 func getNewCreds(sess *session.Session) *iam.AccessKey {
@@ -108,7 +149,7 @@ func getNewCreds(sess *session.Session) *iam.AccessKey {
 
 func main() {
 	profileFlag := flag.String("profile", "default", "AWS profile for which to rotate credentials. Use comma-delimited string to rotate multiple profiles.")
-	awsCredsFileFlag := flag.String("creds-file", "~/.aws/credentials", "Path for AWS CLI credentials file.")
+	awsCredsFileFlag := flag.String("creds-file", "~/.aws/", "Path for AWS CLI config files.")
 	flag.Parse()
 	profiles := strings.Split(*profileFlag, ",")
 	awsCredsFile := *awsCredsFileFlag
@@ -117,12 +158,12 @@ func main() {
 	check(err)
 
 	credsFilePath := strings.Replace(awsCredsFile, "~", user.HomeDir, 1)
-	print(credsFilePath)
+	credsFiles := findCreds(credsFilePath)
 
 	for i := 0; i < len(profiles); i++ {
 		profile := profiles[i]
 		sess := awsSession(profile)
-		creds := readCreds(credsFilePath)
+		creds := readCreds(credsFiles)
 		newCreds := getNewCreds(sess)
 		creds[profile]["aws_access_key_id"] = *newCreds.AccessKeyId
 		creds[profile]["aws_secret_access_key"] = *newCreds.SecretAccessKey
