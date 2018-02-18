@@ -23,9 +23,7 @@ func check(e error) {
 }
 
 func awsSession(profile string) *session.Session {
-	if profile == "" {
-		profile = "default"
-	}
+	// get aws sdk session for given profile
 	sess := session.Must(session.NewSessionWithOptions(session.Options{
 		SharedConfigState: session.SharedConfigEnable,
 		Profile:           profile,
@@ -34,6 +32,7 @@ func awsSession(profile string) *session.Session {
 }
 
 func findCreds(configDir string) []string {
+	// find aws config files in given path
 	var configFiles = [2]string{"config", "credentials"}
 	files := make([]string, 0)
 	for i := 0; i < 2; i++ {
@@ -46,10 +45,14 @@ func findCreds(configDir string) []string {
 }
 
 func readCreds(configFiles []string) map[string]map[string]string {
+	// instantiate aws config object
 	blocks := make(map[string]map[string]string)
+
+	// set up regex object for profile names
 	regex, err := regexp.Compile("^\\[.*\\]")
 	check(err)
 
+	// iterate through config files
 	for i := 0; i < len(configFiles); i++ {
 		configFile := configFiles[i]
 		file, err := os.Open(configFile)
@@ -84,6 +87,7 @@ func readCreds(configFiles []string) map[string]map[string]string {
 }
 
 func backup(configFiles []string) {
+	// make backups of all available config files
 	for i := 0; i < len(configFiles); i++ {
 		configFile := configFiles[i]
 		src, err := os.Open(configFile)
@@ -106,11 +110,15 @@ func writeCreds(configPath string, creds map[string]map[string]string) {
 	files := [2]string{"config", "credentials"}
 	for i := 0; i < len(files); i++ {
 		filename := files[i]
+
+		// create tmp config file
 		file, err := os.Create(configPath + filename + ".tmp")
 		check(err)
 		defer file.Close()
 
 		writer := bufio.NewWriter(file)
+
+		// iterate through profiles in aws config
 		for profile, credmap := range creds {
 			if filename == "config" && profile != "default" {
 				writer.WriteString("[profile " + profile + "]\n")
@@ -118,6 +126,7 @@ func writeCreds(configPath string, creds map[string]map[string]string) {
 				writer.WriteString("[" + profile + "]\n")
 			}
 			for key, value := range credmap {
+				// only write credentials to credentials file, everthing else to config
 				if filename == "config" && key != "aws_secret_access_key" && key != "aws_access_key_id" {
 					writer.WriteString(key + "=" + value + "\n")
 				} else if filename == "credentials" && (key == "aws_secret_access_key" || key == "aws_access_key_id") {
@@ -128,14 +137,17 @@ func writeCreds(configPath string, creds map[string]map[string]string) {
 		}
 		writer.Flush()
 
-		// rename new credsFile
+		// mv tmp files to config files
 		err = os.Rename(configPath+filename+".tmp", configPath+filename)
 		check(err)
 	}
 }
 
 func getNewCreds(sess *session.Session) *iam.AccessKey {
+	// get iam client
 	iamClient := iam.New(sess)
+
+	// get access keys
 	currentKeys, err := iamClient.ListAccessKeys(&iam.ListAccessKeysInput{})
 	check(err)
 
@@ -162,28 +174,44 @@ func getNewCreds(sess *session.Session) *iam.AccessKey {
 }
 
 func main() {
+	// parse command line flags
 	profileFlag := flag.String("profile", "default", "AWS profile for which to rotate credentials. Use comma-delimited string to rotate multiple profiles.")
 	awsCredsFileFlag := flag.String("creds-file", "~/.aws/", "Path for AWS CLI config files.")
 	flag.Parse()
 	profiles := strings.Split(*profileFlag, ",")
 	awsCredsFile := *awsCredsFileFlag
 
+	// get current user
 	user, err := user.Current()
 	check(err)
 
+	// find existing AWS config files
 	credsFilePath := strings.Replace(awsCredsFile, "~", user.HomeDir, 1)
 	credsFiles := findCreds(credsFilePath)
 
+	// back up existing config
 	backup(credsFiles)
 
+	// read current config
 	creds := readCreds(credsFiles)
+
+	// iterate through target profiles
 	for i := 0; i < len(profiles); i++ {
 		profile := profiles[i]
+
+		// get aws sdk session
 		sess := awsSession(profile)
+
+		// rotate crededntials
 		newCreds := getNewCreds(sess)
+
+		// set new credentials for config object in memory
 		creds[profile]["aws_access_key_id"] = *newCreds.AccessKeyId
 		creds[profile]["aws_secret_access_key"] = *newCreds.SecretAccessKey
+
 		print("Successfully rolled creds for " + profile)
 	}
+
+	// write config object to disk
 	writeCreds(credsFilePath, creds)
 }
