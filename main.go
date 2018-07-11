@@ -44,12 +44,16 @@ func findCreds(configDir string) []string {
 	return files
 }
 
-func readCreds(configFiles []string) map[string]map[string]string {
+func readCreds(configFiles []string) map[string]map[string]interface{} {
 	// instantiate aws config object
-	blocks := make(map[string]map[string]string)
+	blocks := make(map[string]map[string]interface{})
 
-	// set up regex object for profile names
-	regex, err := regexp.Compile("^\\[.*\\]")
+	// set up regex objects
+	blockNameRegex, err := regexp.Compile("^\\[.*\\]")
+	check(err)
+	subBlockRegex, err := regexp.Compile("^[A-Z,a-z,0-9]*=$")
+	check(err)
+	subValueRegex, err := regexp.Compile("^\\s.*=.*$")
 	check(err)
 
 	// iterate through config files
@@ -60,14 +64,29 @@ func readCreds(configFiles []string) map[string]map[string]string {
 
 		scanner := bufio.NewScanner(file)
 		var profileName string
+		var subBlock map[string]string
+		var subBlockName string
+		subBlockActive := false
 		for scanner.Scan() {
 			if scanner.Text() != "" {
-				if regex.MatchString(scanner.Text()) {
+				if blockNameRegex.MatchString(scanner.Text()) {
 					profileName = strings.Replace(strings.Replace(strings.Replace(scanner.Text(), "[", "", -1), "]", "", -1), "profile ", "", 1)
 					if _, ok := blocks[profileName]; !ok {
-						blocks[profileName] = make(map[string]string, 2)
+						blocks[profileName] = make(map[string]interface{}, 2)
 					}
+				} else if subBlockRegex.MatchString(scanner.Text()) {
+					subBlockActive = true
+					split := strings.Split(scanner.Text(), "=")
+					subBlockName = split[0]
+					blocks[profileName][subBlockName] = make(map[string]string, 2)
+				} else if subValueRegex.MatchString(scanner.Text()) && subBlockActive {
+					split := strings.Split(scanner.Text(), "=")
+					subBlock = blocks[profileName][subBlockName].(map[string]string)
+					subKey := strings.Replace(split[0], "\t", "", -1)
+					subBlock[subKey] = split[1]
+					blocks[profileName][subBlockName] = subBlock
 				} else {
+					subBlockActive = false
 					split := strings.Split(scanner.Text(), "=")
 					if len(split) != 2 {
 						split = append(split, "")
@@ -106,7 +125,7 @@ func backup(configFiles []string) {
 	}
 }
 
-func writeCreds(configPath string, creds map[string]map[string]string) {
+func writeCreds(configPath string, creds map[string]map[string]interface{}) {
 	files := [2]string{"config", "credentials"}
 	for i := 0; i < len(files); i++ {
 		filename := files[i]
@@ -128,9 +147,23 @@ func writeCreds(configPath string, creds map[string]map[string]string) {
 			for key, value := range credmap {
 				// only write credentials to credentials file, everthing else to config
 				if filename == "config" && key != "aws_secret_access_key" && key != "aws_access_key_id" {
-					writer.WriteString(key + "=" + value + "\n")
+					if str, ok := value.(string); ok {
+						writer.WriteString(key + "=" + str + "\n")
+					} else {
+						writer.WriteString(key + "=" + "\n")
+						for subKey, subValue := range value.(map[string]string) {
+							writer.WriteString("\t" + subKey + "=" + subValue + "\n")
+						}
+					}
 				} else if filename == "credentials" && (key == "aws_secret_access_key" || key == "aws_access_key_id") {
-					writer.WriteString(key + "=" + value + "\n")
+					if str, ok := value.(string); ok {
+						writer.WriteString(key + "=" + str + "\n")
+					} else {
+						writer.WriteString(key + "=" + "\n")
+						for subKey, subValue := range value.(map[string]string) {
+							writer.WriteString("\t" + subKey + "=" + subValue + "\n")
+						}
+					}
 				}
 			}
 			writer.WriteString("\n")
