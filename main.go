@@ -12,6 +12,7 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/iam"
+	"github.com/aws/aws-sdk-go/service/sts"
 )
 
 var print = fmt.Println
@@ -29,6 +30,25 @@ func awsSession(profile string) *session.Session {
 		Profile:           profile,
 	}))
 	return sess
+}
+
+func validateSession(sess *session.Session, accountIds []string) bool {
+	if len(accountIds) == 0 {
+		return true
+	}
+
+	// get sts client
+	stsClient := sts.New(sess)
+	input := &sts.GetCallerIdentityInput{}
+	result, err := stsClient.GetCallerIdentity(input)
+	check(err)
+
+	for _, accountID := range accountIds {
+		if accountID == *result.Account {
+			return true
+		}
+	}
+	return false
 }
 
 func findCreds(configDir string) []string {
@@ -209,8 +229,13 @@ func getNewCreds(sess *session.Session) *iam.AccessKey {
 func main() {
 	// parse command line flags
 	profileFlag := flag.String("profile", "default", "AWS profile for which to rotate credentials. Use comma-delimited string to rotate multiple profiles.")
-	awsCredsFileFlag := flag.String("creds-file", "~/.aws/", "Path for AWS CLI config files.")
+	awsCredsFileFlag := flag.String("config-dir", "~/.aws/", "Path for AWS CLI config files.")
+	accountIdsFlag := flag.String("account-ids", "false", "AWS Account IDs for which to allow rotation of credentials. Use comma-delimited string to rotate credentials for multiple AWS accounts.")
 	flag.Parse()
+	var accountIds []string
+	if *accountIdsFlag != "false" {
+		accountIds = strings.Split(*accountIdsFlag, ",")
+	}
 	profiles := strings.Split(*profileFlag, ",")
 	awsCredsFile := *awsCredsFileFlag
 
@@ -235,14 +260,16 @@ func main() {
 		// get aws sdk session
 		sess := awsSession(profile)
 
-		// rotate crededntials
-		newCreds := getNewCreds(sess)
+		if validateSession(sess, accountIds) {
+			// rotate crededntials
+			newCreds := getNewCreds(sess)
 
-		// set new credentials for config object in memory
-		creds[profile]["aws_access_key_id"] = *newCreds.AccessKeyId
-		creds[profile]["aws_secret_access_key"] = *newCreds.SecretAccessKey
+			// set new credentials for config object in memory
+			creds[profile]["aws_access_key_id"] = *newCreds.AccessKeyId
+			creds[profile]["aws_secret_access_key"] = *newCreds.SecretAccessKey
 
-		print("Successfully rolled creds for " + profile)
+			print("Successfully rolled creds for " + profile)
+		}
 	}
 
 	// write config object to disk
