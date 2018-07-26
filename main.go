@@ -16,6 +16,13 @@ import (
 )
 
 var print = fmt.Println
+var loggingEnabled bool
+
+func log(output interface{}) {
+	if loggingEnabled {
+		print(output)
+	}
+}
 
 func check(e error) {
 	if e != nil {
@@ -33,15 +40,17 @@ func awsSession(profile string) *session.Session {
 }
 
 func validateSession(sess *session.Session, accountIds []string) bool {
-	if len(accountIds) == 0 {
-		return true
-	}
-
 	// get sts client
 	stsClient := sts.New(sess)
 	input := &sts.GetCallerIdentityInput{}
 	result, err := stsClient.GetCallerIdentity(input)
-	check(err)
+	if err != nil {
+		return false
+	}
+
+	if len(accountIds) == 0 {
+		return true
+	}
 
 	for _, accountID := range accountIds {
 		if accountID == *result.Account {
@@ -196,7 +205,7 @@ func writeCreds(configPath string, creds map[string]map[string]interface{}) {
 	}
 }
 
-func getNewCreds(sess *session.Session) *iam.AccessKey {
+func checkCreds(sess *session.Session) bool {
 	// get iam client
 	iamClient := iam.New(sess)
 
@@ -205,13 +214,23 @@ func getNewCreds(sess *session.Session) *iam.AccessKey {
 	check(err)
 
 	// make sure there is only one set of creds
-	var currentKeyID *string
 	if len(currentKeys.AccessKeyMetadata) > 1 {
 		print("There is more than 1 key defined for this profile, nothing has been changed, exiting.")
 		os.Exit(1)
-	} else {
-		currentKeyID = currentKeys.AccessKeyMetadata[0].AccessKeyId
 	}
+
+	return true
+}
+
+func getNewCreds(sess *session.Session) *iam.AccessKey {
+	// get iam client
+	iamClient := iam.New(sess)
+
+	// get access keys
+	currentKeys, err := iamClient.ListAccessKeys(&iam.ListAccessKeysInput{})
+	check(err)
+
+	currentKeyID := currentKeys.AccessKeyMetadata[0].AccessKeyId
 
 	// Create new creds
 	newCreds, err := iamClient.CreateAccessKey(&iam.CreateAccessKeyInput{})
@@ -226,50 +245,151 @@ func getNewCreds(sess *session.Session) *iam.AccessKey {
 	return newCreds.AccessKey
 }
 
+func getProfileNames(creds map[string]map[string]interface{}) []string {
+	profileNames := make([]string, len(creds))
+	i := 0
+	for k := range creds {
+		profileNames[i] = k
+		i++
+	}
+	return profileNames
+}
+
+func contains(array []string, target string) bool {
+	for i := 0; i < len(array); i++ {
+		if array[i] == target {
+			return true
+		}
+	}
+	return false
+}
+
+func validateProfile(configuredProfiles []string, profile string) bool {
+	if contains(configuredProfiles, profile) {
+		return true
+	}
+	return false
+}
+
+func dedupeCreds(creds map[string]map[string]interface{}) map[string]map[string]interface{} {
+	deduped := make(map[string]map[string]interface{})
+	log("Deduping creds")
+	for k := range creds {
+		if creds[k]["aws_access_key_id"] != nil {
+			if deduped[creds[k]["aws_access_key_id"].(string)] == nil {
+				deduped[creds[k]["aws_access_key_id"].(string)] = make(map[string]interface{})
+			}
+			deduped[creds[k]["aws_access_key_id"].(string)]["aws_secret_access_key"] = creds[k]["aws_secret_access_key"].(string)
+			if deduped[creds[k]["aws_access_key_id"].(string)]["profiles"] == nil {
+				deduped[creds[k]["aws_access_key_id"].(string)]["profiles"] = make([]string, 0)
+			}
+			deduped[creds[k]["aws_access_key_id"].(string)]["profiles"] = append(deduped[creds[k]["aws_access_key_id"].(string)]["profiles"].([]string), k)
+			deduped[creds[k]["aws_access_key_id"].(string)]["rolled"] = false
+		}
+	}
+	return deduped
+}
+
 func main() {
 	// parse command line flags
-	profileFlag := flag.String("profile", "default", "AWS profile for which to rotate credentials. Use comma-delimited string to rotate multiple profiles.")
+	profileFlag := flag.String("profile", "default", "AWS profile for which to rotate credentials. Use comma-delimited string to rotate multiple profiles. To rotate all profiles pass 'all'")
 	awsCredsFileFlag := flag.String("config-dir", "~/.aws/", "Path for AWS CLI config files.")
 	accountIdsFlag := flag.String("account-ids", "false", "AWS Account IDs for which to allow rotation of credentials. Use comma-delimited string to rotate credentials for multiple AWS accounts.")
+	loggingValue := flag.Bool("debug", false, "Turn on debug output")
 	flag.Parse()
+	loggingEnabled = *loggingValue
+	// loggingEnabled = true
 	var accountIds []string
 	if *accountIdsFlag != "false" {
 		accountIds = strings.Split(*accountIdsFlag, ",")
 	}
+	log(accountIds)
 	profiles := strings.Split(*profileFlag, ",")
+	log(profiles)
 	awsCredsFile := *awsCredsFileFlag
+	log(awsCredsFile)
 
 	// get current user
 	user, err := user.Current()
 	check(err)
+	log(user)
 
 	// find existing AWS config files
 	credsFilePath := strings.Replace(awsCredsFile, "~", user.HomeDir, 1)
+	log(credsFilePath)
 	credsFiles := findCreds(credsFilePath)
+	log(credsFiles)
 
 	// back up existing config
 	backup(credsFiles)
 
 	// read current config
 	creds := readCreds(credsFiles)
+	log(creds)
+
+	dedupedCreds := dedupeCreds(creds)
+	log(dedupedCreds)
+
+	configuredProfileNames := getProfileNames(creds)
+	log(configuredProfileNames)
+
+	if len(profiles) == 1 && profiles[0] == "all" {
+		profiles = configuredProfileNames
+	}
+
+	oldKeyIds := make(map[string]string)
+
+	for i := 0; i < len(profiles); i++ {
+		profile := profiles[i]
+		if creds[profile]["aws_access_key_id"] != nil {
+			oldKeyIds[profile] = creds[profile]["aws_access_key_id"].(string)
+		} else {
+			oldKeyIds[profile] = ""
+		}
+		if validateProfile(configuredProfileNames, profile) {
+			sess := awsSession(profile)
+			log(validateSession(sess, accountIds))
+			checkCreds(sess)
+		} else {
+			log("Invalid profile " + profile + ", skipping.")
+		}
+	}
 
 	// iterate through target profiles
 	for i := 0; i < len(profiles); i++ {
 		profile := profiles[i]
+		oldKeyID := oldKeyIds[profile]
+		if validateProfile(configuredProfileNames, profile) {
+			// get aws sdk session
+			sess := awsSession(profile)
 
-		// get aws sdk session
-		sess := awsSession(profile)
+			print(validateSession(sess, accountIds))
+			print(contains(dedupedCreds[oldKeyID]["profiles"].([]string), profile))
+			print(dedupedCreds[oldKeyID]["rolled"].(bool))
 
-		if validateSession(sess, accountIds) {
-			// rotate crededntials
-			newCreds := getNewCreds(sess)
-
-			// set new credentials for config object in memory
-			creds[profile]["aws_access_key_id"] = *newCreds.AccessKeyId
-			creds[profile]["aws_secret_access_key"] = *newCreds.SecretAccessKey
-
-			print("Successfully rolled creds for " + profile)
+			if validateSession(sess, accountIds) &&
+				contains(dedupedCreds[oldKeyID]["profiles"].([]string), profile) &&
+				dedupedCreds[oldKeyID]["rolled"].(bool) == false {
+				log("Rotating creds for profile " + profile)
+				// rotate credentials
+				newCreds := getNewCreds(sess)
+				print(*newCreds.AccessKeyId)
+				print(*newCreds.SecretAccessKey)
+				// set new credentials for config object in memory
+				dedupedCreds[oldKeyID]["rolled"] = true
+				for i := range dedupedCreds[oldKeyID]["profiles"].([]string) {
+					print(creds[dedupedCreds[oldKeyID]["profiles"].([]string)[i]]["aws_access_key_id"])
+					if creds[dedupedCreds[oldKeyID]["profiles"].([]string)[i]]["aws_access_key_id"] != nil {
+						log("Updating creds in map")
+						creds[dedupedCreds[oldKeyID]["profiles"].([]string)[i]]["aws_access_key_id"] = *newCreds.AccessKeyId
+						creds[dedupedCreds[oldKeyID]["profiles"].([]string)[i]]["aws_secret_access_key"] = *newCreds.SecretAccessKey
+					}
+				}
+				print("Successfully rolled creds for " + profile)
+			}
 		}
+
+		print(creds)
 	}
 
 	// write config object to disk
