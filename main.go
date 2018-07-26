@@ -363,22 +363,15 @@ func main() {
 			// get aws sdk session
 			sess := awsSession(profile)
 
-			print(validateSession(sess, accountIds))
-			print(contains(dedupedCreds[oldKeyID]["profiles"].([]string), profile))
-			print(dedupedCreds[oldKeyID]["rolled"].(bool))
-
 			if validateSession(sess, accountIds) &&
 				contains(dedupedCreds[oldKeyID]["profiles"].([]string), profile) &&
 				dedupedCreds[oldKeyID]["rolled"].(bool) == false {
 				log("Rotating creds for profile " + profile)
 				// rotate credentials
 				newCreds := getNewCreds(sess)
-				print(*newCreds.AccessKeyId)
-				print(*newCreds.SecretAccessKey)
 				// set new credentials for config object in memory
 				dedupedCreds[oldKeyID]["rolled"] = true
 				for i := range dedupedCreds[oldKeyID]["profiles"].([]string) {
-					print(creds[dedupedCreds[oldKeyID]["profiles"].([]string)[i]]["aws_access_key_id"])
 					if creds[dedupedCreds[oldKeyID]["profiles"].([]string)[i]]["aws_access_key_id"] != nil {
 						log("Updating creds in map")
 						creds[dedupedCreds[oldKeyID]["profiles"].([]string)[i]]["aws_access_key_id"] = *newCreds.AccessKeyId
@@ -388,8 +381,6 @@ func main() {
 				print("Successfully rolled creds for " + profile)
 			}
 		}
-
-		print(creds)
 	}
 
 	// write config object to disk
