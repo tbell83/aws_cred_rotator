@@ -211,12 +211,15 @@ func checkCreds(sess *session.Session) bool {
 
 	// get access keys
 	currentKeys, err := iamClient.ListAccessKeys(&iam.ListAccessKeysInput{})
-	check(err)
+	if err != nil {
+		log(err)
+		return false
+	}
 
 	// make sure there is only one set of creds
 	if len(currentKeys.AccessKeyMetadata) > 1 {
-		print("There is more than 1 key defined for this profile, nothing has been changed, exiting.")
-		os.Exit(1)
+		log("There is more than 1 key defined for this profile, skipping.")
+		return false
 	}
 
 	return true
@@ -298,7 +301,6 @@ func main() {
 	loggingValue := flag.Bool("debug", false, "Turn on debug output")
 	flag.Parse()
 	loggingEnabled = *loggingValue
-	// loggingEnabled = true
 	var accountIds []string
 	if *accountIdsFlag != "false" {
 		accountIds = strings.Split(*accountIdsFlag, ",")
@@ -336,11 +338,14 @@ func main() {
 	if len(profiles) == 1 && profiles[0] == "all" {
 		profiles = configuredProfileNames
 	}
+	log(profiles)
 
 	oldKeyIds := make(map[string]string)
 
+	validProfiles := make([]string, 0)
 	for i := 0; i < len(profiles); i++ {
 		profile := profiles[i]
+		log(profile)
 		if creds[profile]["aws_access_key_id"] != nil {
 			oldKeyIds[profile] = creds[profile]["aws_access_key_id"].(string)
 		} else {
@@ -349,15 +354,19 @@ func main() {
 		if validateProfile(configuredProfileNames, profile) {
 			sess := awsSession(profile)
 			log(validateSession(sess, accountIds))
-			checkCreds(sess)
+			if checkCreds(sess) {
+				validProfiles = append(validProfiles, profile)
+			}
 		} else {
 			log("Invalid profile " + profile + ", skipping.")
 		}
 	}
+	log(validProfiles)
+	log(oldKeyIds)
 
 	// iterate through target profiles
-	for i := 0; i < len(profiles); i++ {
-		profile := profiles[i]
+	for i := 0; i < len(validProfiles); i++ {
+		profile := validProfiles[i]
 		oldKeyID := oldKeyIds[profile]
 		if validateProfile(configuredProfileNames, profile) {
 			// get aws sdk session
