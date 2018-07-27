@@ -9,6 +9,7 @@ import (
 	"os/user"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/iam"
@@ -205,7 +206,7 @@ func writeCreds(configPath string, creds map[string]map[string]interface{}) {
 	}
 }
 
-func checkCreds(sess *session.Session) bool {
+func checkCreds(sess *session.Session, maxAge float64) bool {
 	// get iam client
 	iamClient := iam.New(sess)
 
@@ -215,13 +216,16 @@ func checkCreds(sess *session.Session) bool {
 		log(err)
 		return false
 	}
+	log(currentKeys)
 
 	// make sure there is only one set of creds
 	if len(currentKeys.AccessKeyMetadata) > 1 {
 		log("There is more than 1 key defined for this profile, skipping.")
 		return false
+	} else if (time.Now().Sub(*currentKeys.AccessKeyMetadata[0].CreateDate).Hours() / 24) < maxAge {
+		log("Key has not reeached max age, skipping.")
+		return false
 	}
-
 	return true
 }
 
@@ -295,12 +299,15 @@ func dedupeCreds(creds map[string]map[string]interface{}) map[string]map[string]
 
 func main() {
 	// parse command line flags
-	profileFlag := flag.String("profile", "default", "AWS profile for which to rotate credentials. Use comma-delimited string to rotate multiple profiles. To rotate all profiles pass 'all'")
+	profileFlag := flag.String("profile", "default", "AWS profile for which to rotate credentials. Use comma-delimited string to rotate multiple profiles. To rotate all profiles pass 'all'.")
 	awsCredsFileFlag := flag.String("config-dir", "~/.aws/", "Path for AWS CLI config files.")
 	accountIdsFlag := flag.String("account-ids", "false", "AWS Account IDs for which to allow rotation of credentials. Use comma-delimited string to rotate credentials for multiple AWS accounts.")
-	loggingValue := flag.Bool("debug", false, "Turn on debug output")
+	loggingValue := flag.Bool("debug", false, "Turn on debug output.")
+	maxKeyAge := flag.Float64("keyAge", 0, "Only rotate creds if they exceed this age, in days.")
+	log(maxKeyAge)
 	flag.Parse()
 	loggingEnabled = *loggingValue
+	// loggingEnabled = true
 	var accountIds []string
 	if *accountIdsFlag != "false" {
 		accountIds = strings.Split(*accountIdsFlag, ",")
@@ -354,7 +361,7 @@ func main() {
 		if validateProfile(configuredProfileNames, profile) {
 			sess := awsSession(profile)
 			log(validateSession(sess, accountIds))
-			if checkCreds(sess) {
+			if checkCreds(sess, *maxKeyAge) {
 				validProfiles = append(validProfiles, profile)
 			}
 		} else {
