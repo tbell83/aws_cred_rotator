@@ -42,12 +42,15 @@ func awsSession(profile string) *session.Session {
 
 func validateSession(sess *session.Session, accountIds []string) bool {
 	// get sts client
+	log("Validating Session:")
 	stsClient := sts.New(sess)
 	input := &sts.GetCallerIdentityInput{}
 	result, err := stsClient.GetCallerIdentity(input)
 	if err != nil {
+		log(err)
 		return false
 	}
+	log(result)
 
 	if len(accountIds) == 0 {
 		return true
