@@ -304,29 +304,48 @@ func main() {
 	accountIdsFlag := flag.String("account-ids", "false", "AWS Account IDs for which to allow rotation of credentials. Use comma-delimited string to rotate credentials for multiple AWS accounts.")
 	loggingValue := flag.Bool("debug", false, "Turn on debug output.")
 	maxKeyAge := flag.Float64("keyAge", 0, "Only rotate creds if they exceed this age, in days.")
-	log(maxKeyAge)
 	flag.Parse()
+
 	loggingEnabled = *loggingValue
-	// loggingEnabled = true
+	// Log arguments
+	log("profileFlag:")
+	log(profileFlag)
+	log("awsCredsFileFlag:")
+	log(awsCredsFileFlag)
+	log("accountIdsFlag:")
+	log(accountIdsFlag)
+	log("loggingValue:")
+	log(loggingValue)
+	log("maxKeyAge:")
+	log(maxKeyAge)
+
 	var accountIds []string
 	if *accountIdsFlag != "false" {
 		accountIds = strings.Split(*accountIdsFlag, ",")
 	}
+	log("Account IDs:")
 	log(accountIds)
+
 	profiles := strings.Split(*profileFlag, ",")
+	log("Profiles:")
 	log(profiles)
+
 	awsCredsFile := *awsCredsFileFlag
+	log("AWS Credentials File:")
 	log(awsCredsFile)
 
 	// get current user
 	user, err := user.Current()
 	check(err)
+	log("Current User:")
 	log(user)
 
 	// find existing AWS config files
 	credsFilePath := strings.Replace(awsCredsFile, "~", user.HomeDir, 1)
+	log("Path to credentials files:")
 	log(credsFilePath)
 	credsFiles := findCreds(credsFilePath)
+	log("Credentials files:")
 	log(credsFiles)
 
 	// back up existing config
@@ -334,17 +353,21 @@ func main() {
 
 	// read current config
 	creds := readCreds(credsFiles)
+	log("Credentials:")
 	log(creds)
 
 	dedupedCreds := dedupeCreds(creds)
+	log("Deduped Credentials:")
 	log(dedupedCreds)
 
 	configuredProfileNames := getProfileNames(creds)
+	log("Configured Profile Names:")
 	log(configuredProfileNames)
 
 	if len(profiles) == 1 && profiles[0] == "all" {
 		profiles = configuredProfileNames
 	}
+	log("Profiles to rotate:")
 	log(profiles)
 
 	oldKeyIds := make(map[string]string)
@@ -352,6 +375,7 @@ func main() {
 	validProfiles := make([]string, 0)
 	for i := 0; i < len(profiles); i++ {
 		profile := profiles[i]
+		log("Current Profile:")
 		log(profile)
 		if creds[profile]["aws_access_key_id"] != nil {
 			oldKeyIds[profile] = creds[profile]["aws_access_key_id"].(string)
@@ -360,6 +384,7 @@ func main() {
 		}
 		if validateProfile(configuredProfileNames, profile) {
 			sess := awsSession(profile)
+			log("Validating Current Session:")
 			log(validateSession(sess, accountIds))
 			if checkCreds(sess, *maxKeyAge) {
 				validProfiles = append(validProfiles, profile)
@@ -368,7 +393,9 @@ func main() {
 			log("Invalid profile " + profile + ", skipping.")
 		}
 	}
+	log("Valid Profiles:")
 	log(validProfiles)
+	log("Old Key IDs:")
 	log(oldKeyIds)
 
 	// iterate through target profiles
@@ -378,7 +405,6 @@ func main() {
 		if validateProfile(configuredProfileNames, profile) {
 			// get aws sdk session
 			sess := awsSession(profile)
-
 			if validateSession(sess, accountIds) &&
 				contains(dedupedCreds[oldKeyID]["profiles"].([]string), profile) &&
 				dedupedCreds[oldKeyID]["rolled"].(bool) == false {
