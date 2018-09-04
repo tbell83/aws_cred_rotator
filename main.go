@@ -47,20 +47,24 @@ func validateSession(sess *session.Session, accountIds []string) bool {
 	input := &sts.GetCallerIdentityInput{}
 	result, err := stsClient.GetCallerIdentity(input)
 	if err != nil {
+		log("Invalid Session")
 		log(err)
 		return false
 	}
 	log(result)
 
 	if len(accountIds) == 0 {
+		log("Session Valid")
 		return true
 	}
 
 	for _, accountID := range accountIds {
 		if accountID == *result.Account {
+			log("Session Valid")
 			return true
 		}
 	}
+	log("Invalid Session")
 	return false
 }
 
@@ -312,15 +316,15 @@ func main() {
 	loggingEnabled = *loggingValue
 	// Log arguments
 	log("profileFlag:")
-	log(profileFlag)
+	log(*profileFlag)
 	log("awsCredsFileFlag:")
-	log(awsCredsFileFlag)
+	log(*awsCredsFileFlag)
 	log("accountIdsFlag:")
-	log(accountIdsFlag)
+	log(*accountIdsFlag)
 	log("loggingValue:")
-	log(loggingValue)
+	log(*loggingValue)
 	log("maxKeyAge:")
-	log(maxKeyAge)
+	log(*maxKeyAge)
 
 	var accountIds []string
 	if *accountIdsFlag != "false" {
@@ -330,25 +334,25 @@ func main() {
 	log(accountIds)
 
 	profiles := strings.Split(*profileFlag, ",")
-	log("Profiles:")
+	log("Target profiles:")
 	log(profiles)
 
 	awsCredsFile := *awsCredsFileFlag
-	log("AWS Credentials File:")
+	log("AWS config path:")
 	log(awsCredsFile)
 
 	// get current user
 	user, err := user.Current()
 	check(err)
-	log("Current User:")
+	log("Current user:")
 	log(user)
 
 	// find existing AWS config files
 	credsFilePath := strings.Replace(awsCredsFile, "~", user.HomeDir, 1)
-	log("Path to credentials files:")
+	log("Full AWS config path:")
 	log(credsFilePath)
 	credsFiles := findCreds(credsFilePath)
-	log("Credentials files:")
+	log("Config files:")
 	log(credsFiles)
 
 	// back up existing config
@@ -360,11 +364,11 @@ func main() {
 	log(creds)
 
 	dedupedCreds := dedupeCreds(creds)
-	log("Deduped Credentials:")
+	log("Deduped credentials:")
 	log(dedupedCreds)
 
 	configuredProfileNames := getProfileNames(creds)
-	log("Configured Profile Names:")
+	log("Configured profile names:")
 	log(configuredProfileNames)
 
 	if len(profiles) == 1 && profiles[0] == "all" {
@@ -378,7 +382,7 @@ func main() {
 	validProfiles := make([]string, 0)
 	for i := 0; i < len(profiles); i++ {
 		profile := profiles[i]
-		log("Current Profile:")
+		log("Current profile:")
 		log(profile)
 		if creds[profile]["aws_access_key_id"] != nil {
 			oldKeyIds[profile] = creds[profile]["aws_access_key_id"].(string)
@@ -387,10 +391,12 @@ func main() {
 		}
 		if validateProfile(configuredProfileNames, profile) {
 			sess := awsSession(profile)
-			log("Validating Current Session:")
-			log(validateSession(sess, accountIds))
-			if checkCreds(sess, *maxKeyAge) {
-				validProfiles = append(validProfiles, profile)
+			sessionValidation := validateSession(sess, accountIds)
+			log(sessionValidation)
+			if sessionValidation {
+				if checkCreds(sess, *maxKeyAge) {
+					validProfiles = append(validProfiles, profile)
+				}
 			}
 		} else {
 			log("Invalid profile " + profile + ", skipping.")
