@@ -16,8 +16,14 @@ import (
 	"github.com/aws/aws-sdk-go/service/sts"
 )
 
+var version = "1.0.3"
 var print = fmt.Println
 var loggingEnabled bool
+
+func versionNumber() {
+	print(version)
+	os.Exit(0)
+}
 
 func log(output interface{}) {
 	if loggingEnabled {
@@ -311,7 +317,12 @@ func main() {
 	accountIdsFlag := flag.String("account-ids", "false", "AWS Account IDs for which to allow rotation of credentials. Use comma-delimited string to rotate credentials for multiple AWS accounts.")
 	loggingValue := flag.Bool("debug", false, "Turn on debug output.")
 	maxKeyAge := flag.Float64("keyAge", 0, "Only rotate creds if they exceed this age, in days.")
+	versionFlag := flag.Bool("version", false, "AWS Cred Rotator version.")
 	flag.Parse()
+
+	if *versionFlag {
+		versionNumber()
+	}
 
 	loggingEnabled = *loggingValue
 	// Log arguments
