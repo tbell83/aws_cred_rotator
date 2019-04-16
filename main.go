@@ -98,6 +98,8 @@ func readCreds(configFiles []string) map[string]map[string]interface{} {
 	check(err)
 	subValueRegex, err := regexp.Compile("^\\s.*=.*$")
 	check(err)
+	commentRegex, err := regexp.Compile("^#.*$")
+	check(err)
 
 	// iterate through config files
 	for i := 0; i < len(configFiles); i++ {
@@ -128,6 +130,8 @@ func readCreds(configFiles []string) map[string]map[string]interface{} {
 					subKey := strings.Replace(split[0], "\t", "", -1)
 					subBlock[subKey] = split[1]
 					blocks[profileName][subBlockName] = subBlock
+				} else if commentRegex.MatchString(scanner.Text()) {
+					continue
 				} else {
 					subBlockActive = false
 					split := strings.Split(scanner.Text(), "=")
