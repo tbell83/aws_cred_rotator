@@ -202,7 +202,7 @@ func writeCreds(configPath string, creds map[string]map[string]interface{}) {
 							writer.WriteString("\t" + subKey + "=" + subValue + "\n")
 						}
 					}
-				} else if filename == "credentials" && (key == "aws_secret_access_key" || key == "aws_access_key_id") {
+				} else if filename == "credentials" && (key == "aws_secret_access_key" || key == "aws_access_key_id" || key == "role_arn" || key == "source_profile") {
 					if str, ok := value.(string); ok {
 						writer.WriteString(key + "=" + str + "\n")
 					} else {
